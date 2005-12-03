@@ -8,7 +8,7 @@ server backups. It can also be used on modern desktop multicore processors
 
 There is NO speedup coming from hyperthreading on the hyperthreaded machines,
 since hyperthreads don't have dedicated caches, and the bzip2 is very
-cache-dependent. Expect degraded preformance if you try utilizing hyperthreads.
+cache-dependent. Expect degraded performance if you try utilizing hyperthreads.
 
 The compression process requires more memory than the normal bzip2 -- some
 15Mb average for 2 CPUs, 30Mb for 4 CPUs, etc. This should not pose any problem
