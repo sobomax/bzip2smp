@@ -23,10 +23,13 @@ OBJS= blocksort.o  \
       decompress.o \
       bzlib.o
 
-all: libbz2.a bzip2 bzip2recover test
+all: libbz2.a bzip2 bzip2smp bzip2recover test
 
 bzip2: libbz2.a bzip2.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -o bzip2 bzip2.o -L. -lbz2
+
+bzip2smp: libbz2.a bzip2smp.o note.o detectht.o
+	$(CC) $(CFLAGS) $(LDFLAGS) -o bzip2smp bzip2smp.o note.o detectht.o -L. -lbz2 -lpthread
 
 bzip2recover: bzip2recover.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -o bzip2recover bzip2recover.o
@@ -41,7 +44,7 @@ libbz2.a: $(OBJS)
 	fi
 
 check: test
-test: bzip2
+test: bzip2 bzip2smp
 	@cat words1
 	./bzip2 -1  < sample1.ref > sample1.rb2
 	./bzip2 -2  < sample2.ref > sample2.rb2
@@ -55,6 +58,12 @@ test: bzip2
 	cmp sample1.tst sample1.ref
 	cmp sample2.tst sample2.ref
 	cmp sample3.tst sample3.ref
+	./bzip2smp -1  < sample1.ref > sample1.rb2
+	./bzip2smp -2  < sample2.ref > sample2.rb2
+	./bzip2smp -3  < sample3.ref > sample3.rb2
+	cmp sample1.bz2 sample1.rb2
+	cmp sample2.bz2 sample2.rb2
+	cmp sample3.bz2 sample3.rb2
 	@cat words3
 
 install: bzip2 bzip2recover
