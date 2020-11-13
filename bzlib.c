@@ -4,6 +4,8 @@
 /*---                                               bzlib.c ---*/
 /*-------------------------------------------------------------*/
 
+/* Modified by Konstantin Isakov for the bzip2smp program */
+
 /*--
   This file is a part of bzip2 and/or libbzip2, a program and
   library for lossless, block-sorting data compression.
@@ -194,7 +196,8 @@ int BZ_API(BZ2_bzCompressInit)
                     ( bz_stream* strm, 
                      int        blockSize100k,
                      int        verbosity,
-                     int        workFactor )
+                     int        workFactor,
+                     int        delayedAllocation )
 {
    Int32   n;
    EState* s;
@@ -219,11 +222,16 @@ int BZ_API(BZ2_bzCompressInit)
    s->ftab = NULL;
 
    n       = 100000 * blockSize100k;
-   s->arr1 = BZALLOC( n                  * sizeof(UInt32) );
+
+   if ( !delayedAllocation )
+     s->arr1 = BZALLOC( n                  * sizeof(UInt32) );
    s->arr2 = BZALLOC( (n+BZ_N_OVERSHOOT) * sizeof(UInt32) );
    s->ftab = BZALLOC( 65537              * sizeof(UInt32) );
 
-   if (s->arr1 == NULL || s->arr2 == NULL || s->ftab == NULL) {
+   s->dontFreeArr2 = 0;
+
+   if ( ( !delayedAllocation && s->arr1 == NULL ) ||
+        s->arr2 == NULL || s->ftab == NULL) {
       if (s->arr1 != NULL) BZFREE(s->arr1);
       if (s->arr2 != NULL) BZFREE(s->arr2);
       if (s->ftab != NULL) BZFREE(s->ftab);
@@ -400,10 +408,23 @@ Bool copy_output_until_stop ( EState* s )
    return progress_out;
 }
 
+static void check_delayed_alloc( EState * s )
+{
+  /* If the allocation was delayed, perform it now */
+  if ( ! s->arr1 )
+  {
+    Int32 n = 100000 * s->blockSize100k;
+    bz_stream * strm = s->strm; /* BZALLOC wants this */
+
+    s->arr1 = BZALLOC( n * sizeof(UInt32) );
+    s->mtfv              = (UInt16*)s->arr1;
+    s->ptr               = (UInt32*)s->arr1;
+  }
+}
 
 /*---------------------------------------------------*/
 static
-Bool handle_compress ( bz_stream* strm )
+Bool handle_compress ( bz_stream* strm, Bool * stop_before_blocksort )
 {
    Bool progress_in  = False;
    Bool progress_out = False;
@@ -428,11 +449,25 @@ Bool handle_compress ( bz_stream* strm )
          progress_in |= copy_input_until_stop ( s );
          if (s->mode != BZ_M_RUNNING && s->avail_in_expect == 0) {
             flush_RL ( s );
+            if (stop_before_blocksort) {
+               *stop_before_blocksort = True;
+               /*fprintf( stderr, "stopping before blocksort, %d\n", s->nblock );*/
+               break;
+            }
+            check_delayed_alloc( s );
             BZ2_compressBlock ( s, (Bool)(s->mode == BZ_M_FINISHING) );
             s->state = BZ_S_OUTPUT;
          }
          else
          if (s->nblock >= s->nblockMAX) {
+
+            if (stop_before_blocksort) {
+               *stop_before_blocksort = True;
+               /*fprintf( stderr, "stopping before blocksort, %d\n", s->nblock );*/
+               break;
+            }
+
+            check_delayed_alloc( s );
             BZ2_compressBlock ( s, False );
             s->state = BZ_S_OUTPUT;
          }
@@ -452,11 +487,18 @@ Bool handle_compress ( bz_stream* strm )
 int BZ_API(BZ2_bzCompress) ( bz_stream *strm, int action )
 {
    Bool progress;
+   Bool stopped = False;
+   Bool* stopBeforeBlocksort =
+     action & BZ_STOP_BEFORE_BLOCKSORT ? &stopped : NULL;
    EState* s;
+
    if (strm == NULL) return BZ_PARAM_ERROR;
    s = strm->state;
    if (s == NULL) return BZ_PARAM_ERROR;
+
    if (s->strm != strm) return BZ_PARAM_ERROR;
+
+   action &= ~BZ_STOP_BEFORE_BLOCKSORT;
 
    preswitch:
    switch (s->mode) {
@@ -466,7 +508,11 @@ int BZ_API(BZ2_bzCompress) ( bz_stream *strm, int action )
 
       case BZ_M_RUNNING:
          if (action == BZ_RUN) {
-            progress = handle_compress ( strm );
+            progress = handle_compress ( strm, stopBeforeBlocksort );
+
+            if ( stopped )
+              return BZ_STOPPED_BEFORE_BLOCKSORT;
+
             return progress ? BZ_RUN_OK : BZ_PARAM_ERROR;
          } 
          else
@@ -488,7 +534,11 @@ int BZ_API(BZ2_bzCompress) ( bz_stream *strm, int action )
          if (action != BZ_FLUSH) return BZ_SEQUENCE_ERROR;
          if (s->avail_in_expect != s->strm->avail_in) 
             return BZ_SEQUENCE_ERROR;
-         progress = handle_compress ( strm );
+         progress = handle_compress ( strm, stopBeforeBlocksort );
+
+         if ( stopped )
+           return BZ_STOPPED_BEFORE_BLOCKSORT;
+
          if (s->avail_in_expect > 0 || !isempty_RL(s) ||
              s->state_out_pos < s->numZ) return BZ_FLUSH_OK;
          s->mode = BZ_M_RUNNING;
@@ -498,7 +548,11 @@ int BZ_API(BZ2_bzCompress) ( bz_stream *strm, int action )
          if (action != BZ_FINISH) return BZ_SEQUENCE_ERROR;
          if (s->avail_in_expect != s->strm->avail_in) 
             return BZ_SEQUENCE_ERROR;
-         progress = handle_compress ( strm );
+         progress = handle_compress ( strm, stopBeforeBlocksort );
+
+         if ( stopped )
+           return BZ_STOPPED_BEFORE_BLOCKSORT;
+
          if (!progress) return BZ_SEQUENCE_ERROR;
          if (s->avail_in_expect > 0 || !isempty_RL(s) ||
              s->state_out_pos < s->numZ) return BZ_FINISH_OK;
@@ -506,6 +560,84 @@ int BZ_API(BZ2_bzCompress) ( bz_stream *strm, int action )
          return BZ_STREAM_END;
    }
    return BZ_OK; /*--not reached--*/
+}
+
+void BZ_API(BZ2_bzCompressSaveStateBeforeBlocksort) ( bz_stream* strm, 
+   bz_stream_state_bs * state )
+{
+   UInt32 blockCRC;
+   EState* s = strm->state;
+
+   state->state_in_ch = s->state_in_ch;
+   state->state_in_len = s->state_in_len;
+
+   state->blockNo = s->blockNo + 1;
+
+   blockCRC = s->blockCRC;
+   BZ_FINALISE_CRC( blockCRC );
+
+   state->combinedCRC = (s->combinedCRC << 1) | (s->combinedCRC >> 31);
+   state->combinedCRC ^= blockCRC;
+}
+
+void BZ_API(BZ2_bzCompressRestoreState) ( bz_stream* strm, 
+                                         const bz_stream_state_bs * state )
+{
+  EState* s = strm->state;
+
+  s->state_in_ch = state->state_in_ch;
+  s->state_in_len = state->state_in_len;
+
+  s->blockNo = state->blockNo;
+
+  s->combinedCRC = state->combinedCRC;
+}
+
+void BZ_API(BZ2_bzCompressSaveOutputState) ( bz_stream* strm, 
+      bz_stream_state_out * state )
+{
+  EState* s = strm->state;
+
+  state->bsBuff = s->bsBuff;
+  state->bsLive = s->bsLive;
+}
+
+void BZ_API(BZ2_bzCompressRestoreOutputState) ( bz_stream* strm, 
+      const bz_stream_state_out * state )
+{
+  EState* s = strm->state;
+
+  s->bsBuff = state->bsBuff;
+  s->bsLive = state->bsLive;
+}
+
+void BZ_API(BZ2_bzCompressDoBlocksort) ( bz_stream* strm )
+{
+  EState* s = strm->state;
+
+  check_delayed_alloc( s );
+  
+  BZ2_compressBlock_compute ( strm->state );
+
+  /* When storing, a user supplied buffer will be used instead. */
+  BZFREE( s->arr2 );
+}
+
+size_t BZ_API(BZ2_bzCompressStoreBlocksort) ( bz_stream* strm, void * outBuf,
+                                            int lastBlock )
+{
+  EState* s = strm->state;
+
+  /* From now on, the arr2 buffer is only used as a plain output buffer */
+  s->arr2 = outBuf;
+  s->block = (UChar*)s->arr2;
+  s->dontFreeArr2 = 1;
+
+  BZ2_compressBlock_save ( s, lastBlock );
+
+  s->state = BZ_S_OUTPUT;
+
+  return s->numZ;
 }
 
 
@@ -519,7 +651,7 @@ int BZ_API(BZ2_bzCompressEnd)  ( bz_stream *strm )
    if (s->strm != strm) return BZ_PARAM_ERROR;
 
    if (s->arr1 != NULL) BZFREE(s->arr1);
-   if (s->arr2 != NULL) BZFREE(s->arr2);
+   if (s->arr2 != NULL && ! s->dontFreeArr2 ) BZFREE(s->arr2);
    if (s->ftab != NULL) BZFREE(s->ftab);
    BZFREE(strm->state);
 
@@ -574,8 +706,11 @@ int BZ_API(BZ2_bzDecompressInit)
 
 
 /*---------------------------------------------------*/
+/* Return  True iff data corruption is discovered.
+   Returns False if there is no problem.
+*/
 static
-void unRLE_obuf_to_output_FAST ( DState* s )
+Bool unRLE_obuf_to_output_FAST ( DState* s )
 {
    UChar k1;
 
@@ -584,7 +719,7 @@ void unRLE_obuf_to_output_FAST ( DState* s )
       while (True) {
          /* try to finish existing run */
          while (True) {
-            if (s->strm->avail_out == 0) return;
+            if (s->strm->avail_out == 0) return False;
             if (s->state_out_len == 0) break;
             *( (UChar*)(s->strm->next_out) ) = s->state_out_ch;
             BZ_UPDATE_CRC ( s->calculatedBlockCRC, s->state_out_ch );
@@ -594,10 +729,13 @@ void unRLE_obuf_to_output_FAST ( DState* s )
             s->strm->total_out_lo32++;
             if (s->strm->total_out_lo32 == 0) s->strm->total_out_hi32++;
          }
-   
+
          /* can a new run be started? */
-         if (s->nblock_used == s->save_nblock+1) return;
+         if (s->nblock_used == s->save_nblock+1) return False;
                
+         /* Only caused by corrupt data stream? */
+         if (s->nblock_used > s->save_nblock+1)
+            return True;
    
          s->state_out_len = 1;
          s->state_out_ch = s->k0;
@@ -667,6 +805,10 @@ void unRLE_obuf_to_output_FAST ( DState* s )
                cs_avail_out--;
             }
          }   
+         /* Only caused by corrupt data stream? */
+         if (c_nblock_used > s_save_nblockPP)
+            return True;
+
          /* can a new run be started? */
          if (c_nblock_used == s_save_nblockPP) {
             c_state_out_len = 0; goto return_notr;
@@ -712,6 +854,7 @@ void unRLE_obuf_to_output_FAST ( DState* s )
       s->strm->avail_out    = cs_avail_out;
       /* end save */
    }
+   return False;
 }
 
 
@@ -732,8 +875,11 @@ __inline__ Int32 BZ2_indexIntoF ( Int32 indx, Int32 *cftab )
 
 
 /*---------------------------------------------------*/
+/* Return  True iff data corruption is discovered.
+   Returns False if there is no problem.
+*/
 static
-void unRLE_obuf_to_output_SMALL ( DState* s )
+Bool unRLE_obuf_to_output_SMALL ( DState* s )
 {
    UChar k1;
 
@@ -742,7 +888,7 @@ void unRLE_obuf_to_output_SMALL ( DState* s )
       while (True) {
          /* try to finish existing run */
          while (True) {
-            if (s->strm->avail_out == 0) return;
+            if (s->strm->avail_out == 0) return False;
             if (s->state_out_len == 0) break;
             *( (UChar*)(s->strm->next_out) ) = s->state_out_ch;
             BZ_UPDATE_CRC ( s->calculatedBlockCRC, s->state_out_ch );
@@ -754,8 +900,11 @@ void unRLE_obuf_to_output_SMALL ( DState* s )
          }
    
          /* can a new run be started? */
-         if (s->nblock_used == s->save_nblock+1) return;
-               
+         if (s->nblock_used == s->save_nblock+1) return False;
+
+         /* Only caused by corrupt data stream? */
+         if (s->nblock_used > s->save_nblock+1)
+            return True;
    
          s->state_out_len = 1;
          s->state_out_ch = s->k0;
@@ -788,7 +937,7 @@ void unRLE_obuf_to_output_SMALL ( DState* s )
       while (True) {
          /* try to finish existing run */
          while (True) {
-            if (s->strm->avail_out == 0) return;
+            if (s->strm->avail_out == 0) return False;
             if (s->state_out_len == 0) break;
             *( (UChar*)(s->strm->next_out) ) = s->state_out_ch;
             BZ_UPDATE_CRC ( s->calculatedBlockCRC, s->state_out_ch );
@@ -800,7 +949,11 @@ void unRLE_obuf_to_output_SMALL ( DState* s )
          }
    
          /* can a new run be started? */
-         if (s->nblock_used == s->save_nblock+1) return;
+         if (s->nblock_used == s->save_nblock+1) return False;
+
+         /* Only caused by corrupt data stream? */
+         if (s->nblock_used > s->save_nblock+1)
+            return True;
    
          s->state_out_len = 1;
          s->state_out_ch = s->k0;
@@ -830,6 +983,7 @@ void unRLE_obuf_to_output_SMALL ( DState* s )
 /*---------------------------------------------------*/
 int BZ_API(BZ2_bzDecompress) ( bz_stream *strm )
 {
+   Bool    corrupt;
    DState* s;
    if (strm == NULL) return BZ_PARAM_ERROR;
    s = strm->state;
@@ -840,12 +994,13 @@ int BZ_API(BZ2_bzDecompress) ( bz_stream *strm )
       if (s->state == BZ_X_IDLE) return BZ_SEQUENCE_ERROR;
       if (s->state == BZ_X_OUTPUT) {
          if (s->smallDecompress)
-            unRLE_obuf_to_output_SMALL ( s ); else
-            unRLE_obuf_to_output_FAST  ( s );
+            corrupt = unRLE_obuf_to_output_SMALL ( s ); else
+            corrupt = unRLE_obuf_to_output_FAST  ( s );
+         if (corrupt) return BZ_DATA_ERROR;
          if (s->nblock_used == s->save_nblock+1 && s->state_out_len == 0) {
             BZ_FINALISE_CRC ( s->calculatedBlockCRC );
             if (s->verbosity >= 3) 
-               VPrintf2 ( " {0x%x, 0x%x}", s->storedBlockCRC, 
+               VPrintf2 ( " {0x%08x, 0x%08x}", s->storedBlockCRC, 
                           s->calculatedBlockCRC );
             if (s->verbosity >= 2) VPrintf0 ( "]" );
             if (s->calculatedBlockCRC != s->storedBlockCRC)
@@ -863,7 +1018,7 @@ int BZ_API(BZ2_bzDecompress) ( bz_stream *strm )
          Int32 r = BZ2_decompress ( s );
          if (r == BZ_STREAM_END) {
             if (s->verbosity >= 3)
-               VPrintf2 ( "\n    combined CRCs: stored = 0x%x, computed = 0x%x", 
+               VPrintf2 ( "\n    combined CRCs: stored = 0x%08x, computed = 0x%08x", 
                           s->storedCombinedCRC, s->calculatedCombinedCRC );
             if (s->calculatedCombinedCRC != s->storedCombinedCRC)
                return BZ_DATA_ERROR;
@@ -970,7 +1125,7 @@ BZFILE* BZ_API(BZ2_bzWriteOpen)
 
    if (workFactor == 0) workFactor = 30;
    ret = BZ2_bzCompressInit ( &(bzf->strm), blockSize100k, 
-                              verbosity, workFactor );
+                              verbosity, workFactor, 0 );
    if (ret != BZ_OK)
       { BZ_SETERR(ret); free(bzf); return NULL; };
 
@@ -1289,7 +1444,7 @@ int BZ_API(BZ2_bzBuffToBuffCompress)
    strm.bzfree = NULL;
    strm.opaque = NULL;
    ret = BZ2_bzCompressInit ( &strm, blockSize100k, 
-                              verbosity, workFactor );
+                              verbosity, workFactor, 0 );
    if (ret != BZ_OK) return ret;
 
    strm.next_in = source;

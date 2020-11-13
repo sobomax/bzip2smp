@@ -4,6 +4,8 @@
 /*---                                               bzlib.h ---*/
 /*-------------------------------------------------------------*/
 
+/* Modified by Konstantin Isakov for the bzip2smp program */
+
 /*--
   This file is a part of bzip2 and/or libbzip2, a program and
   library for lossless, block-sorting data compression.
@@ -69,12 +71,18 @@ extern "C" {
 #define BZ_RUN               0
 #define BZ_FLUSH             1
 #define BZ_FINISH            2
+/* This flag requests to stop just before the block sort stage */
+#define BZ_STOP_BEFORE_BLOCKSORT            0x10
 
 #define BZ_OK                0
 #define BZ_RUN_OK            1
 #define BZ_FLUSH_OK          2
 #define BZ_FINISH_OK         3
 #define BZ_STREAM_END        4
+/* This indicates that the process was stopped just before the blocksort
+stage */
+#define BZ_STOPPED_BEFORE_BLOCKSORT        5
+
 #define BZ_SEQUENCE_ERROR    (-1)
 #define BZ_PARAM_ERROR       (-2)
 #define BZ_MEM_ERROR         (-3)
@@ -104,6 +112,22 @@ typedef
       void *opaque;
    } 
    bz_stream;
+
+typedef 
+   struct {
+      unsigned long state_in_ch;
+      long state_in_len;
+      unsigned long combinedCRC;
+      long blockNo;
+   } 
+   bz_stream_state_bs;
+
+   typedef 
+   struct {
+     unsigned long bsBuff;
+     long bsLive;
+   } 
+   bz_stream_state_out;
 
 
 #ifndef BZ_IMPORT
@@ -139,13 +163,45 @@ BZ_EXTERN int BZ_API(BZ2_bzCompressInit) (
       bz_stream* strm, 
       int        blockSize100k, 
       int        verbosity, 
-      int        workFactor 
+      int        workFactor,
+      int        delayedAllocation
    );
 
 BZ_EXTERN int BZ_API(BZ2_bzCompress) ( 
       bz_stream* strm, 
       int action 
    );
+
+/* Saves RL state, block number+1, and updated combined crc */
+BZ_EXTERN void BZ_API(BZ2_bzCompressSaveStateBeforeBlocksort) ( 
+      bz_stream* strm, 
+      bz_stream_state_bs * state
+   );
+
+BZ_EXTERN void BZ_API(BZ2_bzCompressRestoreState) ( 
+      bz_stream* strm, 
+      const bz_stream_state_bs * state
+   );
+
+/* Saves the buffer of the bitstream outout */
+BZ_EXTERN void BZ_API(BZ2_bzCompressSaveOutputState) ( 
+      bz_stream* strm, 
+      bz_stream_state_out * state
+   );
+
+BZ_EXTERN void BZ_API(BZ2_bzCompressRestoreOutputState) ( 
+      bz_stream* strm, 
+      const bz_stream_state_out * state
+   );
+
+BZ_EXTERN void BZ_API(BZ2_bzCompressDoBlocksort) ( 
+      bz_stream* strm );
+
+/* Returns number of bytes used in the outBuf */
+BZ_EXTERN size_t BZ_API(BZ2_bzCompressStoreBlocksort) ( 
+      bz_stream* strm, void * outBuf,
+      int lastBlock );
+
 
 BZ_EXTERN int BZ_API(BZ2_bzCompressEnd) ( 
       bz_stream* strm 

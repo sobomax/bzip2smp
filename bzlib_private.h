@@ -4,6 +4,8 @@
 /*---                                       bzlib_private.h ---*/
 /*-------------------------------------------------------------*/
 
+/* Modified by Konstantin Isakov for the bzip2smp program */
+
 /*--
   This file is a part of bzip2 and/or libbzip2, a program and
   library for lossless, block-sorting data compression.
@@ -296,6 +298,15 @@ typedef
       /* second dimension: only 3 needed; 4 makes index calculations faster */
       UInt32   len_pack[BZ_MAX_ALPHA_SIZE][4];
 
+      /* We supply our own arr2. This flag indicates that it should not
+      be freed */
+
+      int dontFreeArr2;
+
+      /* some computed MTF values; it was needed to save it in order to split
+      the sendMTFValues() function to a calculation part and saving part.*/
+      Int32 nGroups, nSelectors, alphaSize;
+
    }
    EState;
 
@@ -308,6 +319,12 @@ BZ2_blockSort ( EState* );
 
 extern void 
 BZ2_compressBlock ( EState*, Bool );
+
+extern void 
+BZ2_compressBlock_compute ( EState* );
+
+extern void 
+BZ2_compressBlock_save ( EState*, Bool );
 
 extern void 
 BZ2_bsInitWrite ( EState* );
