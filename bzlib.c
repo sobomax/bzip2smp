@@ -10,7 +10,7 @@
   This file is a part of bzip2 and/or libbzip2, a program and
   library for lossless, block-sorting data compression.
 
-  Copyright (C) 1996-2002 Julian R Seward.  All rights reserved.
+  Copyright (C) 1996-2005 Julian R Seward.  All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
   modification, are permitted provided that the following conditions
@@ -44,7 +44,7 @@
   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
   Julian Seward, Cambridge, UK.
-  jseward@acm.org
+  jseward@bzip.org
   bzip2/libbzip2 version 1.0 of 21 March 2000
 
   This program is based on (at least) the work of:
@@ -90,12 +90,12 @@ void BZ2_bz__AssertH__fail ( int errcode )
    fprintf(stderr, 
       "\n\nbzip2/libbzip2: internal error number %d.\n"
       "This is a bug in bzip2/libbzip2, %s.\n"
-      "Please report it to me at: jseward@acm.org.  If this happened\n"
+      "Please report it to me at: jseward@bzip.org.  If this happened\n"
       "when you were using some program which uses libbzip2 as a\n"
       "component, you should also report this bug to the author(s)\n"
       "of that program.  Please make an effort to report this bug;\n"
       "timely and accurate bug reports eventually lead to higher\n"
-      "quality software.  Thanks.  Julian Seward, 30 December 2001.\n\n",
+      "quality software.  Thanks.  Julian Seward, 15 February 2005.\n\n",
       errcode,
       BZ2_bzlibVersion()
    );
