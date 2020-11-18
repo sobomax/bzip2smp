@@ -1,3 +1,5 @@
+## About
+
 This is a README file for the bzip2smp program, version 1.0, 2-Dec-2005.
 
 This program parallelizes the BZIP2 compression process to achieve near-linear
