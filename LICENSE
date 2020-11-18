@@ -1,3 +1,11 @@
+--------------------------------------------------------------------------
+This program, "bzip2smp", is copyright (c) 2005 Konstantin Isakov.
+It is based on the modified "libbzip2" library, part of the "bzip2"
+program, version 1.0.2. The source was taken from the Debian source
+package, 1.0.2-10, so it contains some Debian patches, too. This
+program is licensed under the same conditions as the original
+"bzip2" and "libbzip2".
+--------------------------------------------------------------------------
 
 --------------------------------------------------------------------------
 
