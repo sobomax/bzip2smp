@@ -87,9 +87,47 @@ int isHtPresent( void )
   }
 }
 #else
+#if defined(__FreeBSD__)
+#include <sys/types.h>
+#include <sys/sysctl.h>
+
+#include <stdlib.h>
+#include <unistd.h>
+
+int isHtPresent( void )
+{
+    size_t size;
+    const char * const scname = "kern.sched.topology_spec";
+
+    if (sysctlbyname(scname, NULL, &size, NULL, 0) != 0)
+        return 0;
+    if (size <= 0)
+        return 0;
+    char buf[size + 1];
+    if(sysctlbyname(scname, buf, &size, NULL, 0) != 0)
+        return 0;
+    buf[size] = '\0';
+
+    int ngrps;
+    const char *bp = buf;
+    for (ngrps = 0; bp != NULL; ngrps++) {
+        const char *grp = strstr(bp, "<group ");
+        if (grp == NULL)
+            break;
+        bp = strstr(grp + 1, "</group>");
+        if (bp != NULL)
+            bp++;
+    }
+
+    long x = sysconf( _SC_NPROCESSORS_ONLN );
+
+    return (ngrps < x);
+}
+#else
 int isHtPresent( void )
 {
   note( 1, "Assuming that hyperthreading is not present.\n" );
   return 0;
 }
+#endif
 #endif
