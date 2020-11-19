@@ -269,7 +269,7 @@ int main( int argc, char *argv[] )
   {
     if ( !strcmp( argv[ x ], "--help" ) )
     {
-      fprintf( stderr, helpText );
+      fprintf( stderr, "%s", helpText );
       return 1;
     }
 
